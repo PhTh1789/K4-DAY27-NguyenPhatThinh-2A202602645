@@ -83,13 +83,46 @@ async def replay(thread_id: str) -> None:
         )
 
 
+async def calibration() -> None:
+    """Report confidence for human decisions and their approval rate."""
+    console = Console()
+    async with db_conn() as conn:
+        async with conn.execute(
+            """
+            SELECT COUNT(*) AS decisions,
+                   SUM(CASE WHEN decision = 'approve' THEN 1 ELSE 0 END) AS approvals,
+                   AVG(confidence) AS average_confidence
+              FROM audit_events
+             WHERE action = 'commit'
+               AND decision IN ('approve', 'reject')
+            """
+        ) as cur:
+            row = await cur.fetchone()
+
+    decisions = row["decisions"] or 0
+    approvals = row["approvals"] or 0
+    average_confidence = row["average_confidence"]
+    if not decisions:
+        console.print("[yellow]No human approval decisions found yet.[/yellow]")
+        return
+    approval_rate = approvals / decisions
+    console.print("[bold]Confidence calibration (human decisions)[/bold]")
+    console.print(f"Decisions:          {decisions}")
+    console.print(f"Approved:           {approvals}")
+    console.print(f"Approval rate:      {approval_rate:.1%}")
+    console.print(f"Average confidence: {average_confidence:.1%}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--thread", help="Replay one thread by id")
     parser.add_argument("--list", action="store_true", help="List recent threads")
+    parser.add_argument("--calibration", action="store_true", help="Report confidence vs human approvals")
     args = parser.parse_args()
 
-    if args.list:
+    if args.calibration:
+        asyncio.run(calibration())
+    elif args.list:
         asyncio.run(list_threads())
     elif args.thread:
         asyncio.run(replay(args.thread))

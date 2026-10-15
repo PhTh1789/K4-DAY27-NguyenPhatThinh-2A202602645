@@ -180,6 +180,38 @@ async def node_human_approval(state):
     return {"human_choice": resp.get("choice"), "human_feedback": resp.get("feedback")}
 
 
+async def node_edit_review(state):
+    """Rewrite the proposed review using the reviewer's edit instructions."""
+    console.print("[cyan]→ edit_review[/cyan]")
+    t0 = time.monotonic()
+    a = state["analysis"]
+    llm = get_llm().with_structured_output(PRAnalysis)
+    feedback = state.get("human_feedback") or "Improve the review for clarity and correctness."
+    with console.status("[dim]Rewriting review with reviewer feedback...[/dim]"):
+        revised: PRAnalysis = await llm.ainvoke([
+            {"role": "system", "content": "Rewrite the review as a senior code reviewer. Return structured output."},
+            {
+                "role": "user",
+                "content": (
+                    f"Original review:\n{a.model_dump_json()}\n\n"
+                    f"Pull request diff:\n{state['pr_diff']}\n\n"
+                    f"Reviewer edit instructions:\n{feedback}"
+                ),
+            },
+        ])
+    await audit(state, AuditEntry(
+        agent_id=AGENT_ID,
+        action="edit_review",
+        confidence=revised.confidence,
+        risk_level=risk_level_for(revised.confidence),
+        reviewer_id=os.environ.get("GITHUB_USER"),
+        decision="edit",
+        reason=feedback,
+        execution_time_ms=int((time.monotonic() - t0) * 1000),
+    ))
+    return {"analysis": revised}
+
+
 def _render_comment_body(state) -> str:
     a = state["analysis"]
     lines = [f"### Automated review (confidence {a.confidence:.0%})", "", a.summary, ""]
@@ -210,13 +242,13 @@ async def node_commit(state):
     # Two paths converge here:
     #   1. human_approval → commit (only post if approved)
     #   2. escalate → synthesize → commit (always post the refined review)
-    if state.get("escalation_answers") or state.get("human_choice") == "approve":
+    if state.get("escalation_answers") or state.get("human_choice") in {"approve", "edit"}:
         action = _post(state)
     else:
         console.print(f"  [yellow]·[/yellow] skipping comment (choice={state.get('human_choice')})")
         action = "rejected"
     confidence = state["analysis"].confidence
-    decision = "approve" if state.get("escalation_answers") or state.get("human_choice") == "approve" else "reject"
+    decision = "approve" if state.get("escalation_answers") or state.get("human_choice") in {"approve", "edit"} else "reject"
     await audit(state, AuditEntry(
         agent_id=AGENT_ID,
         action="commit",
@@ -313,7 +345,8 @@ def build_graph(checkpointer):
     for name, fn in [
         ("fetch_pr", node_fetch_pr), ("analyze", node_analyze), ("route", node_route),
         ("auto_approve", node_auto_approve), ("human_approval", node_human_approval),
-        ("commit", node_commit), ("escalate", node_escalate), ("synthesize", node_synthesize),
+        ("edit_review", node_edit_review), ("commit", node_commit),
+        ("escalate", node_escalate), ("synthesize", node_synthesize),
     ]:
         g.add_node(name, fn)
     g.add_edge(START, "fetch_pr")
@@ -324,7 +357,12 @@ def build_graph(checkpointer):
         {"auto_approve": "auto_approve", "human_approval": "human_approval", "escalate": "escalate"},
     )
     g.add_edge("auto_approve", END)
-    g.add_edge("human_approval", "commit")
+    g.add_conditional_edges(
+        "human_approval",
+        lambda s: "edit_review" if s.get("human_choice") == "edit" else "commit",
+        {"edit_review": "edit_review", "commit": "commit"},
+    )
+    g.add_edge("edit_review", "commit")
     g.add_edge("commit", END)
     g.add_edge("escalate", "synthesize")
     g.add_edge("synthesize", "commit")

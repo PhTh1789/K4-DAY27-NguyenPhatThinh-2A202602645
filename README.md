@@ -224,6 +224,7 @@ uv run python exercises/exercise_4_audit.py --pr https://github.com/VinUni-AI20k
 # → after the run, replay the full session:
 uv run python -m audit.replay --thread <thread_id-printed-above>
 uv run python -m audit.replay --list   # see recent threads
+uv run python -m audit.replay --calibration  # confidence vs human approval rate
 ```
 
 #### Why two storage mechanisms?
@@ -284,6 +285,11 @@ The skeleton wires up the Streamlit boilerplate (session state, page layout, top
 2. **Confidence calibration.** After N sessions, query `audit_events` to compute `AVG(confidence)` vs `count(human_choice = 'approve')`. Is the model over- or under-confident?
 3. **Multi-reviewer fan-out.** Use the `Send` API to escalate the same questions to two reviewers (two threads) and wait for both.
 4. **Auto-edit.** When the human chooses `edit`, call the LLM again to rewrite the review using `human_feedback`, then commit.
+
+This implementation includes the confidence calibration report and the auto-edit
+flow. Use `--calibration` after collecting human approval sessions, and choose
+`edit` with feedback in Exercise 4 or the Streamlit UI to trigger a rewritten
+review before posting.
 
 ## FAQ / gotchas
 
