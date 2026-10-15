@@ -291,6 +291,18 @@ flow. Use `--calibration` after collecting human approval sessions, and choose
 `edit` with feedback in Exercise 4 or the Streamlit UI to trigger a rewritten
 review before posting.
 
+The remaining bonuses are also included:
+
+```bash
+uv run python -m audit.replay --history <thread_id>
+uv run python -m audit.replay --thread <thread_id> --resume-checkpoint <checkpoint_id> --answer '{"choice":"reject","feedback":"Re-check the migration risk"}'
+uv run python -m audit.multi_reviewer --questions "Is the migration backward compatible?" "Is the token storage intentional?" --answers '{"reviewer-1":{"Is the migration backward compatible?":"yes"},"reviewer-2":{"Is the token storage intentional?":"no"}}'
+```
+
+The multi-reviewer demo uses LangGraph `Send` to fan out the same questions to
+two reviewer branches and collects both answer sets without posting duplicate
+GitHub comments.
+
 ## FAQ / gotchas
 
 **`interrupt()` raises `GraphInterrupt` instead of pausing.**

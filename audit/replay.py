@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 
 from rich.console import Console
 from rich.table import Table
 
 from common.db import db_conn, replay_events
+from audit.time_travel import checkpoint_history, resume_from_checkpoint
 
 
 RISK_COLOR = {"low": "green", "med": "yellow", "high": "red"}
@@ -113,14 +115,44 @@ async def calibration() -> None:
     console.print(f"Average confidence: {average_confidence:.1%}")
 
 
+async def history(thread_id: str, limit: int) -> None:
+    console = Console()
+    snapshots = await checkpoint_history(thread_id, limit)
+    if not snapshots:
+        console.print(f"[red]No checkpoints found for thread {thread_id}[/red]")
+        return
+    table = Table(title=f"Checkpoints for {thread_id}")
+    table.add_column("#")
+    table.add_column("checkpoint_id")
+    table.add_column("next")
+    table.add_column("state keys")
+    for index, snapshot in enumerate(snapshots):
+        checkpoint_id = snapshot.config["configurable"].get("checkpoint_id", "?")
+        table.add_row(str(index), checkpoint_id, str(snapshot.next), ", ".join(snapshot.values))
+    console.print(table)
+
+
+async def resume_checkpoint(thread_id: str, checkpoint_id: str, answer: str) -> None:
+    result = await resume_from_checkpoint(thread_id, checkpoint_id, json.loads(answer))
+    Console().print(result)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--thread", help="Replay one thread by id")
     parser.add_argument("--list", action="store_true", help="List recent threads")
     parser.add_argument("--calibration", action="store_true", help="Report confidence vs human approvals")
+    parser.add_argument("--history", help="List durable checkpoints for a thread")
+    parser.add_argument("--limit", type=int, default=25)
+    parser.add_argument("--resume-checkpoint", help="Resume a historical checkpoint id")
+    parser.add_argument("--answer", help="JSON reviewer answer for --resume-checkpoint")
     args = parser.parse_args()
 
-    if args.calibration:
+    if args.history:
+        asyncio.run(history(args.history, args.limit))
+    elif args.resume_checkpoint and args.thread and args.answer:
+        asyncio.run(resume_checkpoint(args.thread, args.resume_checkpoint, args.answer))
+    elif args.calibration:
         asyncio.run(calibration())
     elif args.list:
         asyncio.run(list_threads())
